@@ -1,0 +1,66 @@
+{
+  "name": "SupoClip",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "backend",
+  "workspaceFolder": "/workspaces/supoclip",
+  "forwardPorts": [3107, 8000, 5432, 6379, 9100],
+  "portsAttributes": {
+    "3107": { "label": "Frontend", "onAutoForward": "openBrowser" },
+    "8000": { "label": "Backend API", "onAutoForward": "notify" },
+    "5432": { "label": "PostgreSQL", "onAutoForward": "ignore" },
+    "6379": { "label": "Redis", "onAutoForward": "ignore" },
+    "9100": { "label": "MCP Server", "onAutoForward": "notify" }
+  },
+  "postCreateCommand": "cd /workspaces/supoclip && docker-compose up -d --build && echo 'Waiting for services...' && sleep 10 && docker-compose ps",
+  "postStartCommand": "docker-compose ps",
+  "postAttachCommand": "docker-compose logs -f --tail=50",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+        "prisma.prisma",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "python.defaultInterpreterPath": "/workspaces/supoclip/backend/.venv/bin/python"
+      }
+    }
+  },
+  "remoteEnv": {
+    "NEXT_PUBLIC_API_URL": "http://localhost:8000",
+    "NEXT_PUBLIC_APP_URL": "http://localhost:3107",
+    "NEXT_PUBLIC_SELF_HOST": "true",
+    "SELF_HOST": "true",
+    "BACKEND_AUTH_SECRET": "dev_secret_32_chars_minimum_here_123",
+    "APP_SETTINGS_ENCRYPTION_KEY": "dev_key_32_chars_long_1234567890ab",
+    "ASSEMBLY_AI_API_KEY": "${localEnv:ASSEMBLY_AI_API_KEY}",
+    "LLM": "${localEnv:LLM:-google-gla:gemini-3-flash-preview}",
+    "GOOGLE_API_KEY": "${localEnv:GOOGLE_API_KEY}",
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}",
+    "TRANSCRIPTION_PROVIDER": "assemblyai",
+    "YOUTUBE_DOWNLOAD_PROVIDER": "yt_dlp",
+    "YOUTUBE_MAX_HEIGHT": "720",
+    "MAX_CLIPS": "5",
+    "DEFAULT_PROCESSING_MODE": "fast",
+    "CORS_ORIGINS": "http://localhost:3107",
+    "SOCIAL_PUBLISHING_ACCESS": "off",
+    "POSTHOG_PROJECT_TOKEN": "",
+    "POSTHOG_HOST": "https://eu.i.posthog.com",
+    "REDIS_PASSWORD": "",
+    "TEMP_DIR": "/tmp",
+    "MEDIA_STORAGE": "local"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "enableBuildKit": "true",
+      "version": "latest"
+    }
+  },
+  "runArgs": ["--cap-add=SYS_RESOURCE", "--security-opt=seccomp=unconfined"]
+}
