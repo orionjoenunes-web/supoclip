@@ -29,14 +29,14 @@ jobs:
       matrix:
         service:
           - name: frontend
+            images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend
             context: .
             dockerfile: frontend/Dockerfile
             build_args: ''
           - name: backend
-            context: ./backend
-            dockerfile: ./backend/Dockerfile
-            build_args: BACKEND_CPU_ONLY=true
-          - name: worker
+            images: |
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-worker
             context: ./backend
             dockerfile: ./backend/Dockerfile
             build_args: BACKEND_CPU_ONLY=true
@@ -58,7 +58,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service.name }}
+          images: ${{ matrix.service.images }}
           tags: |
             type=raw,value=latest
             type=sha,prefix=sha-
