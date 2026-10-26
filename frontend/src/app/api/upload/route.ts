@@ -9,37 +9,52 @@ import { maxVideoUploadBytes, uploadTooLargeMessage } from "@/lib/video-upload";
 // Same slack the API allows for multipart boundaries around a file on the cap.
 const UPLOAD_FRAMING_BYTES = 1024 * 1024;
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Refuse before `formData()` buffers the body. A missing length is how a
-  // chunked upload skips the cap; browsers send Content-Length for a file.
+  // Keep the proxy streaming. Calling request.formData() here buffers a
+  // multi-gigabyte upload in the frontend container before forwarding it.
   const declaredLength = request.headers.get("content-length");
   const limit = maxVideoUploadBytes();
-  if (!declaredLength || !/^\d+$/.test(declaredLength)) {
-    return NextResponse.json(
-      { detail: "A Content-Length is required for this upload." },
-      { status: 411 },
-    );
+  if (declaredLength && !/^\d+$/.test(declaredLength)) {
+    return NextResponse.json({ detail: "Invalid Content-Length." }, { status: 400 });
   }
-  if (Number(declaredLength) > limit + UPLOAD_FRAMING_BYTES) {
+  if (declaredLength && Number(declaredLength) > limit + UPLOAD_FRAMING_BYTES) {
     return NextResponse.json({ detail: uploadTooLargeMessage(limit) }, { status: 413 });
   }
 
-  const formData = await request.formData();
+  const contentType = request.headers.get("content-type");
+  if (!contentType?.toLowerCase().startsWith("multipart/form-data;")) {
+    return NextResponse.json({ detail: "A multipart upload is required." }, { status: 400 });
+  }
+  if (!request.body) {
+    return NextResponse.json({ detail: "A video file is required." }, { status: 400 });
+  }
+
   const apiUrl =
     process.env.BACKEND_INTERNAL_URL ||
     process.env.NEXT_PUBLIC_API_URL ||
     "http://localhost:8000";
   const normalizedApiUrl = apiUrl.replace(/\/$/, "");
+  const requestHeaders = new Headers({
+    ...buildBackendAuthHeaders(session.user.id),
+    ...(await backendTraceHeaders()),
+    "Content-Type": contentType,
+  });
+  if (declaredLength) requestHeaders.set("Content-Length", declaredLength);
+
   const upstream = await fetch(`${normalizedApiUrl}/upload`, {
     method: "POST",
-    headers: { ...buildBackendAuthHeaders(session.user.id), ...(await backendTraceHeaders()) },
-    body: formData,
-  });
+    headers: requestHeaders,
+    body: request.body,
+    duplex: "half",
+    cache: "no-store",
+  } as RequestInit);
 
   return new Response(upstream.body, {
     status: upstream.status,
