@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const apiUrl = process.env.UPLOAD_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
   const normalizedApiUrl = apiUrl.replace(/\/$/, "");
 
   return NextResponse.json(
