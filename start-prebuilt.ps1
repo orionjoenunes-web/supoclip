@@ -46,7 +46,7 @@ foreach ($name in @('BETTER_AUTH_SECRET', 'BACKEND_AUTH_SECRET', 'APP_SETTINGS_E
 Set-EnvValue 'NODE_ENV' 'production'
 Set-EnvValue 'TRANSCRIPTION_PROVIDER' 'assemblyai'
 Set-EnvValue 'BACKEND_CPU_ONLY' 'true'
-Set-EnvValue 'BACKEND_PLATFORM' 'linux/amd64'
+Set-EnvValue 'BACKEND_PLATFORM' 'linux/arm64'
 Set-EnvValue 'LLM' 'google-gla:gemini-3-flash-preview'
 
 # Write UTF-8 without a BOM so Docker Compose reads the .env file reliably.
