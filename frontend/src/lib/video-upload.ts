@@ -150,7 +150,7 @@ export async function uploadVideoFile(
     if (uploadAuthorization.storage === "s3") {
       return uploadVideoFileToS3(file, uploadAuthorization);
     }
-    return uploadVideoFileInLocalChunks(file, maxBytes);
+    return uploadVideoFileInLocalChunks(file);
   }
   if (!uploadAuthorization.directUpload) {
     return uploadVideoFileViaProxy(file, maxBytes);
@@ -182,7 +182,7 @@ export async function uploadVideoFile(
   return uploadResult.video_path;
 }
 
-async function uploadVideoFileInLocalChunks(file: File, maxBytes: number): Promise<string> {
+async function uploadVideoFileInLocalChunks(file: File): Promise<string> {
   const started = await fetch("/api/upload/local/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
