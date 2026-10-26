@@ -52,16 +52,21 @@ Set-EnvValue 'LLM' 'google-gla:gemini-3-flash-preview'
 # Write UTF-8 without a BOM so Docker Compose reads the .env file reliably.
 [System.IO.File]::WriteAllLines($envPath, $lines, [System.Text.UTF8Encoding]::new($false))
 
-$assemblyLine = $lines | Where-Object { $_ -match '^\s*ASSEMBLY_AI_API_KEY=' } | Select-Object -First 1
-$googleLine = $lines | Where-Object { $_ -match '^\s*GOOGLE_API_KEY=' } | Select-Object -First 1
-$assemblyKey = ($assemblyLine -replace '^\s*ASSEMBLY_AI_API_KEY=', '').Trim().Trim('"')
-$googleKey = ($googleLine -replace '^\s*GOOGLE_API_KEY=', '').Trim().Trim('"')
+$assemblyKey = Get-EnvValue 'ASSEMBLY_AI_API_KEY'
+$llm = Get-EnvValue 'LLM'
+$providerKeyName = if ($llm -match '^openai:') { 'OPENAI_API_KEY' }
+    elseif ($llm -match '^anthropic:') { 'ANTHROPIC_API_KEY' }
+    elseif ($llm -match '^openrouter:') { 'OPENROUTER_API_KEY' }
+    elseif ($llm -match '^google-gla:') { 'GOOGLE_API_KEY' }
+    else { '' }
+$providerKey = if ($providerKeyName) { Get-EnvValue $providerKeyName } else { 'configured' }
 
-if (-not $assemblyKey -or -not $googleKey) {
+if (-not $assemblyKey -or -not $providerKey) {
     Write-Host ''
     Write-Host 'Add your API keys to .env, save it, then run this script again:'
     Write-Host '  ASSEMBLY_AI_API_KEY=  (get it from assemblyai.com)'
-    Write-Host '  GOOGLE_API_KEY=       (get it from aistudio.google.com)'
+    if ($providerKeyName) { Write-Host "  $providerKeyName= (for the provider in LLM=$llm)" }
+    else { Write-Host "  Set LLM to a supported provider:model value and add that provider's key." }
     Write-Host 'The generated app secrets are already filled in.'
     Start-Process notepad.exe -ArgumentList $envPath
     exit 2
