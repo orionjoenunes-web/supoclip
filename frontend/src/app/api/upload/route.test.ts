@@ -27,12 +27,15 @@ describe("/api/upload", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it("rejects a declared body over the cap before reading it", async () => {
+  it("rejects a declared body over the cap before forwarding it", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const response = await POST(new Request("http://app/api/upload", {
       method: "POST",
-      headers: { "content-length": String(4_000_000_000 + 1024 * 1024 + 1) },
+      headers: {
+        "content-length": String(4_000_000_000 + 1024 * 1024 + 1),
+        "content-type": "multipart/form-data; boundary=test",
+      },
       body: "not-read",
     }));
     expect(response.status).toBe(413);
@@ -40,11 +43,35 @@ describe("/api/upload", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("rejects a chunked upload that does not declare its length", async () => {
-    const fetchMock = vi.fn();
+  it("streams a multipart body when Content-Length is absent", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ video_path: "upload://test.mp4" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
-    const response = await POST(new Request("http://app/api/upload", { method: "POST" }));
-    expect(response.status).toBe(411);
-    expect(fetchMock).not.toHaveBeenCalled();
+    const request = new Request("http://app/api/upload", {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=test" },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("--test--"));
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+    const requestBody = request.body;
+
+    const response = await POST(request);
+    const forwardedRequest = fetchMock.mock.calls[0][1] as RequestInit;
+
+    expect(response.status).toBe(201);
+    expect(forwardedRequest.body).toBe(requestBody);
+    expect(forwardedRequest.duplex).toBe("half");
+    expect(new Headers(forwardedRequest.headers).get("content-type")).toBe(
+      "multipart/form-data; boundary=test",
+    );
   });
 });
