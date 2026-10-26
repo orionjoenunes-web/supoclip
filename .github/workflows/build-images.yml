@@ -15,7 +15,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/supoclip
 
 jobs:
   build:
@@ -29,14 +28,12 @@ jobs:
       matrix:
         service:
           - name: frontend
-            images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend
+            image_name: supoclip-frontend
             context: .
             dockerfile: frontend/Dockerfile
             build_args: ''
           - name: backend
-            images: |
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-worker
+            image_name: supoclip-backend
             context: ./backend
             dockerfile: ./backend/Dockerfile
             build_args: BACKEND_CPU_ONLY=true
@@ -58,7 +55,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ matrix.service.images }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.service.image_name }}
           tags: |
             type=raw,value=latest
             type=sha,prefix=sha-
@@ -74,3 +71,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.service.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+
+      - name: Publish worker aliases for the backend manifest
+        if: matrix.service.name == 'backend'
+        env:
+          SOURCE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          while IFS= read -r source_tag; do
+            [ -n "$source_tag" ] || continue
+            worker_tag="${source_tag/-backend:/-worker:}"
+            docker buildx imagetools create --tag "$worker_tag" "$source_tag"
+          done <<< "$SOURCE_TAGS"
