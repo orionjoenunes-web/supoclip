@@ -417,6 +417,7 @@ def test_get_youtube_video_info_falls_back_to_ytdlp_on_data_api_failure(monkeypa
 def test_get_youtube_video_info_falls_back_to_data_api_on_ytdlp_failure(monkeypatch):
     config = Config()
     config.youtube_metadata_provider = YOUTUBE_METADATA_PROVIDER_YTDLP
+    config.youtube_data_api_key = "youtube-key"
 
     set_config_override(config)
     try:
@@ -434,6 +435,32 @@ def test_get_youtube_video_info_falls_back_to_data_api_on_ytdlp_failure(monkeypa
         assert result == {"title": "Fallback API"}
     finally:
         set_config_override(None)
+
+
+
+def test_get_youtube_video_info_skips_data_api_fallback_without_dedicated_key(monkeypatch):
+    config = Config()
+    config.youtube_metadata_provider = YOUTUBE_METADATA_PROVIDER_YTDLP
+    config.google_api_key = "generic-google-key"
+    config.youtube_data_api_key = None
+
+    set_config_override(config)
+    try:
+        monkeypatch.setattr(
+            "src.youtube_utils._fetch_video_info_with_ytdlp",
+            lambda _url: (_ for _ in ()).throw(ValueError("metadata unavailable")),
+        )
+        monkeypatch.setattr(
+            "src.youtube_utils._fetch_video_info_with_youtube_data_api",
+            lambda _url: (_ for _ in ()).throw(AssertionError("Data API fallback must be skipped")),
+        )
+
+        result = get_youtube_video_info("https://www.youtube.com/watch?v=abcdefghijk")
+
+        assert result is None
+    finally:
+        set_config_override(None)
+
 
 
 def test_get_youtube_video_info_falls_back_when_data_api_returns_empty_items(monkeypatch):
