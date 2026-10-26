@@ -67,6 +67,10 @@ type ProxyUploadAuthorization = {
   reason: "signed_backend_auth_required";
 };
 
+type LocalUploadAuthorization = {
+  storage: "local";
+};
+
 type S3UploadAuthorization = {
   storage: "s3";
   video_path: string;
@@ -75,7 +79,7 @@ type S3UploadAuthorization = {
   parts: { partNumber: number; url: string }[];
 };
 
-type UploadAuthorization = DirectUploadAuthorization | ProxyUploadAuthorization | S3UploadAuthorization;
+type UploadAuthorization = DirectUploadAuthorization | ProxyUploadAuthorization | LocalUploadAuthorization | S3UploadAuthorization;
 
 const extractYouTubeVideoId = (value: string): string | null => {
   const input = value.trim();
@@ -143,7 +147,10 @@ export async function uploadVideoFile(
 
   const uploadAuthorization = await requestUploadAuthorization(file);
   if ("storage" in uploadAuthorization) {
-    return uploadVideoFileToS3(file, uploadAuthorization);
+    if (uploadAuthorization.storage === "s3") {
+      return uploadVideoFileToS3(file, uploadAuthorization);
+    }
+    return uploadVideoFileInLocalChunks(file);
   }
   if (!uploadAuthorization.directUpload) {
     return uploadVideoFileViaProxy(file, maxBytes);
@@ -173,6 +180,76 @@ export async function uploadVideoFile(
   }
 
   return uploadResult.video_path;
+}
+
+async function uploadVideoFileInLocalChunks(file: File): Promise<string> {
+  const started = await fetch("/api/upload/local/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, size: file.size, contentType: file.type }),
+    cache: "no-store",
+  });
+  if (!started.ok) {
+    throw new Error(formatSupportMessage(await parseApiError(started, `Upload start failed: ${started.status}`)));
+  }
+  const session = await started.json();
+  const sessionId = session.sessionId as string | undefined;
+  const partSize = Number(session.partSize);
+  const partCount = Number(session.partCount);
+  if (!sessionId || !Number.isSafeInteger(partSize) || partSize < 1 || !Number.isSafeInteger(partCount) || partCount < 1) {
+    throw new Error("The server returned an invalid upload session.");
+  }
+
+  try {
+    for (let partNumber = 1; partNumber <= partCount; partNumber++) {
+      const start = (partNumber - 1) * partSize;
+      const body = file.slice(start, Math.min(file.size, start + partSize));
+      let response: Response | undefined;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          response = await fetch(`/api/upload/local/${sessionId}/${partNumber}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/octet-stream" },
+            body,
+            cache: "no-store",
+          });
+          if (response.ok || response.status < 500) break;
+        } catch (error) {
+          if (attempt === 2) throw error;
+        }
+      }
+      if (!response?.ok) {
+        if (!response) throw new Error("The upload connection was interrupted.");
+        const fallback = response.status === 413
+          ? "The upload service rejected a 16 MB chunk. The Codespaces ingress limit is smaller than this chunk."
+          : `Upload part ${partNumber} failed: ${response.status}`;
+        throw new Error(formatSupportMessage(await parseApiError(response, fallback)));
+      }
+    }
+
+    const completed = await fetch("/api/upload/local/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+      cache: "no-store",
+    });
+    if (!completed.ok) {
+      throw new Error(formatSupportMessage(await parseApiError(completed, `Upload completion failed: ${completed.status}`)));
+    }
+    const result = await completed.json();
+    if (typeof result.video_path !== "string" || !result.video_path) {
+      throw new Error("Upload finished without a video path. Please try again.");
+    }
+    return result.video_path;
+  } catch (error) {
+    await fetch("/api/upload/local/abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+      cache: "no-store",
+    }).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function uploadVideoFileToS3(file: File, authorization: S3UploadAuthorization): Promise<string> {

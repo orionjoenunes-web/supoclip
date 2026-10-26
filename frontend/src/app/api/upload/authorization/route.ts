@@ -24,6 +24,9 @@ export async function POST(request: Request) {
       return new Response(upstream.body, { status: upstream.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
     }
     const authorization = upstream.ok ? await upstream.json() : null;
+    if (authorization?.storage === "local") {
+      return NextResponse.json(authorization, { headers: { "Cache-Control": "no-store" } });
+    }
     if (authorization?.storage === "s3") {
       return NextResponse.json(authorization, { headers: { "Cache-Control": "no-store" } });
     }

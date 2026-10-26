@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any, cast
 import logging
 import asyncio
+import json
+import math
+import os
+import shutil
 import uuid
 import aiofiles
 
@@ -457,6 +461,160 @@ async def authorize_upload(request: Request, db: AsyncSession = Depends(get_db))
     except UploadLimitReached as exc:
         raise HTTPException(429, str(exc)) from None
     except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+
+# Codespaces tunnels reject very large individual request bodies. Keep each
+# authenticated request bounded, then assemble the parts on the backend disk.
+LOCAL_UPLOAD_PART_BYTES = 16 * 1024 * 1024
+
+
+def _local_upload_dir(config, session_id: str) -> Path:
+    return Path(config.temp_dir) / "uploads" / ".chunks" / session_id
+
+
+@router.post("/upload/local/start")
+@media_work
+async def start_local_upload(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _get_authenticated_user_id(request, db)
+    try:
+        payload = await request.json()
+        size = payload.get("size")
+        filename = payload.get("filename")
+        if type(size) is not int or size <= 0:
+            raise ValueError("A valid file size is required")
+        if not isinstance(filename, str) or not filename.strip():
+            raise ValueError("A filename is required")
+        safe_name = Path(filename.replace("\\\\", "/")).name[:255]
+        config = get_config()
+        session_id = await reserve_upload(db, user_id, size, config)
+        session_dir = _local_upload_dir(config, session_id)
+        session_dir.mkdir(parents=True, exist_ok=False)
+        (session_dir / "metadata.json").write_text(
+            json.dumps({"filename": safe_name, "size": size}),
+            encoding="utf-8",
+        )
+        await bind_upload(
+            db, session_id,
+            {"uploadId": session_id, "video_path": f"local-upload://{session_id}"},
+        )
+        return {
+            "sessionId": session_id,
+            "partSize": LOCAL_UPLOAD_PART_BYTES,
+            "partCount": math.ceil(size / LOCAL_UPLOAD_PART_BYTES),
+        }
+    except UploadLimitReached as exc:
+        raise HTTPException(429, str(exc)) from None
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.put("/upload/local/{upload_id}/parts/{part_number}")
+async def upload_local_part(
+    upload_id: str, part_number: int, request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = await _get_authenticated_user_id(request, db)
+    try:
+        session = await get_upload(
+            db, user_id,
+            {"uploadId": upload_id, "video_path": f"local-upload://{upload_id}"},
+        )
+        total_size = int(session.size)
+        part_count = math.ceil(total_size / LOCAL_UPLOAD_PART_BYTES)
+        if part_number < 1 or part_number > part_count:
+            raise ValueError("Invalid upload part number")
+        expected = min(
+            LOCAL_UPLOAD_PART_BYTES,
+            total_size - (part_number - 1) * LOCAL_UPLOAD_PART_BYTES,
+        )
+        raw_length = request.headers.get("content-length")
+        if raw_length and (not raw_length.isdigit() or int(raw_length) != expected):
+            raise HTTPException(400, "Upload part length did not match")
+        session_dir = _local_upload_dir(get_config(), str(session.id))
+        if not session_dir.is_dir():
+            raise ValueError("Upload expired or is unavailable; restart the upload")
+        target = session_dir / f"part-{part_number:06d}.bin"
+        temporary = session_dir / f".part-{part_number:06d}.tmp"
+        received = 0
+        async with aiofiles.open(temporary, "wb") as output:
+            async for data in request.stream():
+                received += len(data)
+                if received > expected:
+                    raise HTTPException(413, "Upload part exceeds its declared size")
+                await output.write(data)
+        if received != expected:
+            temporary.unlink(missing_ok=True)
+            raise HTTPException(400, "Upload part was incomplete")
+        os.replace(temporary, target)
+        return {"partNumber": part_number, "size": received}
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.post("/upload/local/complete")
+async def complete_local_upload(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _get_authenticated_user_id(request, db)
+    try:
+        payload = await request.json()
+        upload_id = payload.get("sessionId")
+        if not isinstance(upload_id, str):
+            raise ValueError("An upload session is required")
+        session = await get_upload(
+            db, user_id,
+            {"uploadId": upload_id, "video_path": f"local-upload://{upload_id}"},
+        )
+        config = get_config()
+        session_dir = _local_upload_dir(config, str(session.id))
+        metadata = json.loads((session_dir / "metadata.json").read_text(encoding="utf-8"))
+        size = int(session.size)
+        part_count = math.ceil(size / LOCAL_UPLOAD_PART_BYTES)
+        uploads_dir = Path(config.temp_dir) / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        extension = Path(str(metadata.get("filename") or "upload.mp4")).suffix[:16]
+        video_path = uploads_dir / f"{uuid.uuid4()}{extension}"
+        written = 0
+        async with aiofiles.open(video_path, "wb") as output:
+            for number in range(1, part_count + 1):
+                part_path = session_dir / f"part-{number:06d}.bin"
+                expected = min(LOCAL_UPLOAD_PART_BYTES, size - written)
+                if not part_path.is_file() or part_path.stat().st_size != expected:
+                    video_path.unlink(missing_ok=True)
+                    raise ValueError("An upload part is missing or incomplete")
+                async with aiofiles.open(part_path, "rb") as part:
+                    while data := await part.read(1024 * 1024):
+                        written += len(data)
+                        await output.write(data)
+        if written != size:
+            video_path.unlink(missing_ok=True)
+            raise ValueError("The uploaded file size did not match")
+        await finish_upload(db, session.id, "completed")
+        await asyncio.to_thread(shutil.rmtree, session_dir, True)
+        return {"message": "Video uploaded successfully", "video_path": f"upload://{video_path.name}"}
+    except (ValueError, TypeError, AttributeError, KeyError, OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.post("/upload/local/abort")
+async def abort_local_upload(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _get_authenticated_user_id(request, db)
+    try:
+        payload = await request.json()
+        upload_id = payload.get("sessionId")
+        if not isinstance(upload_id, str):
+            raise ValueError("An upload session is required")
+        session = await get_upload(
+            db, user_id,
+            {"uploadId": upload_id, "video_path": f"local-upload://{upload_id}"},
+            for_abort=True,
+        )
+        await finish_upload(db, session.id, "aborted")
+        await asyncio.to_thread(shutil.rmtree, _local_upload_dir(get_config(), str(session.id)), True)
+        return {"message": "Upload cancelled"}
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
         raise HTTPException(400, str(exc)) from None
 
 

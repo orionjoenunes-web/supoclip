@@ -289,8 +289,19 @@ def _fetch_video_info_with_ytdlp(url: str, task_id: Optional[str] = None) -> Dic
         raise ValueError(f"Invalid YouTube URL: {url}")
 
     ydl_opts = _build_info_options(task_id)
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as exc:
+        # Keep the video ID and sanitized reason for diagnosis; never log the
+        # input URL, which may contain signed query parameters.
+        logger.warning(
+            "yt-dlp metadata extraction failed for %s (%s): %s",
+            video_id,
+            type(exc).__name__,
+            redact_secrets(str(exc))[:500],
+        )
+        raise
 
     return {
         "id": info.get("id"),
@@ -393,7 +404,15 @@ def get_youtube_video_info(
         if primary_provider == YOUTUBE_METADATA_PROVIDER_YTDLP
         else YOUTUBE_METADATA_PROVIDER_YTDLP
     )
-    providers = [primary_provider, secondary_provider]
+    providers = [primary_provider]
+    # A generic Google API key was rejected by this API in the current
+    # deployment. Only use it as a fallback when a dedicated YouTube key is
+    # configured; keep an explicitly selected Data API provider available.
+    if primary_provider == YOUTUBE_METADATA_PROVIDER_YTDLP:
+        if config.youtube_data_api_key:
+            providers.append(secondary_provider)
+    else:
+        providers.append(secondary_provider)
     last_error: Optional[Exception] = None
 
     for index, provider in enumerate(providers):
@@ -427,7 +446,7 @@ def get_youtube_video_info(
                     "Primary YouTube metadata provider %s failed for %s: %s. Trying %s.",
                     provider,
                     video_id,
-                    exc,
+                    redact_secrets(str(exc))[:500],
                     secondary_provider,
                 )
             else:
@@ -435,11 +454,15 @@ def get_youtube_video_info(
                     "Fallback YouTube metadata provider %s failed for %s: %s",
                     provider,
                     video_id,
-                    exc,
+                    redact_secrets(str(exc))[:500],
                 )
 
     if last_error:
-        logger.warning("YouTube video info fetch failed for %s: %s", video_id, last_error)
+        logger.warning(
+            "YouTube video info fetch failed for %s: %s",
+            video_id,
+            redact_secrets(str(last_error))[:500],
+        )
     return None
 
 
