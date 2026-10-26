@@ -289,8 +289,19 @@ def _fetch_video_info_with_ytdlp(url: str, task_id: Optional[str] = None) -> Dic
         raise ValueError(f"Invalid YouTube URL: {url}")
 
     ydl_opts = _build_info_options(task_id)
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as exc:
+        # Keep the video ID and sanitized reason for diagnosis; never log the
+        # input URL, which may contain signed query parameters.
+        logger.warning(
+            "yt-dlp metadata extraction failed for %s (%s): %s",
+            video_id,
+            type(exc).__name__,
+            redact_secrets(str(exc))[:500],
+        )
+        raise
 
     return {
         "id": info.get("id"),
@@ -393,7 +404,15 @@ def get_youtube_video_info(
         if primary_provider == YOUTUBE_METADATA_PROVIDER_YTDLP
         else YOUTUBE_METADATA_PROVIDER_YTDLP
     )
-    providers = [primary_provider, secondary_provider]
+    providers = [primary_provider]
+    # A Google API key is not proof that the YouTube Data API accepts it.
+    # Only use that API as a fallback when its dedicated key is configured;
+    # otherwise don't repeat the known unauthenticated request on every import.
+    if primary_provider == YOUTUBE_METADATA_PROVIDER_YTDLP:
+        if config.youtube_data_api_key:
+            providers.append(secondary_provider)
+    else:
+        providers.append(secondary_provider)
     last_error: Optional[Exception] = None
 
     for index, provider in enumerate(providers):
