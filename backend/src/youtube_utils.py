@@ -404,15 +404,16 @@ def get_youtube_video_info(
         if primary_provider == YOUTUBE_METADATA_PROVIDER_YTDLP
         else YOUTUBE_METADATA_PROVIDER_YTDLP
     )
-    providers = [primary_provider]
+    providers = [primary_provider, secondary_provider]
     # A Google API key is not proof that the YouTube Data API accepts it.
-    # Only use that API as a fallback when its dedicated key is configured;
-    # otherwise don't repeat the known unauthenticated request on every import.
-    if primary_provider == YOUTUBE_METADATA_PROVIDER_YTDLP:
-        if config.youtube_data_api_key:
-            providers.append(secondary_provider)
-    else:
-        providers.append(secondary_provider)
+    # Skip that provider whenever it would only use the generic Google key.
+    if (
+        YOUTUBE_METADATA_PROVIDER_DATA_API in providers
+        and not config.youtube_data_api_key
+    ):
+        providers.remove(YOUTUBE_METADATA_PROVIDER_DATA_API)
+        if not providers:
+            providers.append(YOUTUBE_METADATA_PROVIDER_YTDLP)
     last_error: Optional[Exception] = None
 
     for index, provider in enumerate(providers):
@@ -446,7 +447,7 @@ def get_youtube_video_info(
                     "Primary YouTube metadata provider %s failed for %s: %s. Trying %s.",
                     provider,
                     video_id,
-                    exc,
+                    redact_secrets(str(exc))[:500],
                     secondary_provider,
                 )
             else:
@@ -454,11 +455,15 @@ def get_youtube_video_info(
                     "Fallback YouTube metadata provider %s failed for %s: %s",
                     provider,
                     video_id,
-                    exc,
+                    redact_secrets(str(exc))[:500],
                 )
 
     if last_error:
-        logger.warning("YouTube video info fetch failed for %s: %s", video_id, last_error)
+        logger.warning(
+            "YouTube video info fetch failed for %s: %s",
+            video_id,
+            redact_secrets(str(last_error))[:500],
+        )
     return None
 
 
