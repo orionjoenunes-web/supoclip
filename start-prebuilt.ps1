@@ -72,11 +72,23 @@ if (-not $assemblyKey -or -not $providerKey) {
     exit 2
 }
 
+function Invoke-DockerCompose([string[]]$Arguments) {
+    & docker compose @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker Compose failed (exit code $LASTEXITCODE). Start Docker Desktop and confirm 'docker info' works, then run this script again."
+    }
+}
+
+docker info *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker Desktop's Linux engine is not running. Start Docker Desktop, wait until it says Engine running, confirm 'docker info' works, then run this script again."
+}
+
 docker compose version | Out-Host
-docker compose config --quiet
-docker compose pull
-docker compose up -d --no-build --pull always
-docker compose ps
+Invoke-DockerCompose @('config', '--quiet')
+Invoke-DockerCompose @('pull')
+Invoke-DockerCompose @('up', '-d', '--no-build', '--pull', 'always')
+Invoke-DockerCompose @('ps')
 
 Write-Host ''
 Write-Host 'Waiting for SupoClip at http://localhost:3107 ...'
