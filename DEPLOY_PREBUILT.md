@@ -10,4 +10,4 @@
 
 The generated secrets are `BETTER_AUTH_SECRET`, `BACKEND_AUTH_SECRET`, and `APP_SETTINGS_ENCRYPTION_KEY`. Keep `.env` private; it is ignored by Git. If GHCR asks for authentication, run `docker login ghcr.io` with your GitHub username and a token with `read:packages`.
 
-The override disables local builds and source bind mounts for the three published services. The optional MCP server is excluded from the default startup. Compose v2.24.4 or newer is required for the override merge tags.
+The override disables local builds and source bind mounts for the three published services. The startup script targets ARM64 by default for an Oracle Ampere A1 VM; the multi-architecture image tags also include AMD64. The optional MCP server is excluded from the default startup. Compose v2.24.4 or newer is required for the override merge tags.
