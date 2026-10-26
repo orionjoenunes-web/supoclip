@@ -404,16 +404,15 @@ def get_youtube_video_info(
         if primary_provider == YOUTUBE_METADATA_PROVIDER_YTDLP
         else YOUTUBE_METADATA_PROVIDER_YTDLP
     )
-    providers = [primary_provider, secondary_provider]
-    # A Google API key is not proof that the YouTube Data API accepts it.
-    # Skip that provider whenever it would only use the generic Google key.
-    if (
-        YOUTUBE_METADATA_PROVIDER_DATA_API in providers
-        and not config.youtube_data_api_key
-    ):
-        providers.remove(YOUTUBE_METADATA_PROVIDER_DATA_API)
-        if not providers:
-            providers.append(YOUTUBE_METADATA_PROVIDER_YTDLP)
+    providers = [primary_provider]
+    # A generic Google API key was rejected by this API in the current
+    # deployment. Only use it as a fallback when a dedicated YouTube key is
+    # configured; keep an explicitly selected Data API provider available.
+    if primary_provider == YOUTUBE_METADATA_PROVIDER_YTDLP:
+        if config.youtube_data_api_key:
+            providers.append(secondary_provider)
+    else:
+        providers.append(secondary_provider)
     last_error: Optional[Exception] = None
 
     for index, provider in enumerate(providers):
