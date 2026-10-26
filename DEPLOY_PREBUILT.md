@@ -8,6 +8,6 @@
 4. Save `.env` and run `powershell -ExecutionPolicy Bypass -File .\start-prebuilt.ps1` again. It pulls the three GHCR images, starts Compose, and checks `http://localhost:3107/api/auth/get-session`.
 5. Open **http://localhost:3107**.
 
-The generated secrets are `BETTER_AUTH_SECRET`, `BACKEND_AUTH_SECRET`, and `APP_SETTINGS_ENCRYPTION_KEY`. Keep `.env) private; it is ignored by Git. If GHCR asks for authentication, run `docker login ghcr.io` with your GitHub username and a token with `read:packages`.
+The generated secrets are `BETTER_AUTH_SECRET`, `BACKEND_AUTH_SECRET`, and `APP_SETTINGS_ENCRYPTION_KEY`. Keep `.env` private; it is ignored by Git. If GHCR asks for authentication, run `docker login ghcr.io` with your GitHub username and a token with `read:packages`.
 
 The override disables local builds and source bind mounts for the three published services. The optional MCP server is excluded from the default startup. Compose v2.24.4 or newer is required for the override merge tags.
