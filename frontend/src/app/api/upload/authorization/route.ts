@@ -44,6 +44,19 @@ export async function POST(request: Request) {
   }
 
   const apiUrl = process.env.UPLOAD_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  // Codespaces private forwarded ports require GitHub tunnel authentication.
+  // Cross-origin browser uploads cannot provide that tunnel credential, so
+  // send them through this same-origin Next.js route instead.
+  try {
+    if (new URL(apiUrl).hostname.endsWith(".app.github.dev")) {
+      return NextResponse.json(
+        { directUpload: false, reason: "signed_backend_auth_required" },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
+  } catch {
+    // Keep the existing direct-upload fallback for a malformed optional URL.
+  }
   const normalizedApiUrl = apiUrl.replace(/\/$/, "");
 
   return NextResponse.json(
